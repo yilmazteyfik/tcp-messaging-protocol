@@ -1,56 +1,155 @@
 import socket
-import sys
 import threading
+import os
+import sys
+import time
+from getpass import getpass
 
-rendezvous = ('192.168.1.4', 55555)
+nonvalid_ch = "é!'^+%&/()=?#<>£$½\\æ€¨':~@"
+password = getpass("Password: ")
+h = 1
 
-print('connecting to rendezvous server')
-
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(('0.0.0.0', 50011))
-sock.sendto(b'0', rendezvous)
+is_exit = False
+is_kicked = False
+wrong_admin = False
+is_banned = False
+is_error = False
+nick_taken = False
 
 while True:
-    data = sock.recv(1024).decode()
+    if password == "1234":
+        nickname = input("Nickname: ")
+        i = 1
+        is_valid = True
+        while True:
+            if nickname != "admin" and is_valid:
+                if nickname[0] in "0123456789.":
+                    is_valid = False
+                for ch in nonvalid_ch:
+                    if ch in nickname or len(nickname) < 3:
+                        is_valid = False
+                        break
+                if is_valid:
+                    break
 
-    if data.strip() == 'ready':
-        print('checked in with server, waiting')
+            elif (i < 3) and (nickname == "admin" or not is_valid):
+                print("You can not take this nickname. {} tries left.".format(3 - i))
+                nickname = input("Nickname: ")
+                is_valid = True
+                i += 1
+
+            else:
+                print("You can not take this nickname. Try later.");
+                time.sleep(1.5)
+                quit()
         break
 
-data = sock.recv(1024).decode()
+    elif password == "12admin34":
+        nickname = "admin"
+        break
 
-ip, sport, dport = data.split(' ')
+    else:
+        if (h < 3):
+            print("Wrong password! {} tries left.".format(3 - h))
+            password = getpass("Password: ")
+            h += 1
 
-sport = int(sport)
-dport = int(dport)
+        else:
+            print("Wrong password! Try later.");
+            time.sleep(1.5)
+            quit()
 
-print('\ngot peer')
-print('     ip:              {}'.format(ip))
-print('     source port:     {}'.format(sport))
-print('     destination port:{}'.format(dport))
+server_ip = input("Enter server's IP: ")
 
-# punch hole
+client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-print('punching hole')
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(('0.0.0.0', sport))
-sock.sendto(b'0', (ip, dport))
+try:
+    client.connect((server_ip, 8113))
 
 
-def listen():
-    sock1 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock1.bind(('0.0.0.0', sport))
+except:
+    print("Could not connect with server.")
+    time.sleep(1.5)
+    quit()
+
+def receive():
+    global is_kicked
+    global wrong_admin
+    global is_banned
+    global is_error
+    global nick_taken
+
     while True:
-        data1 = sock1.recv(1024)
-        print('\rpeer: {}\n> '.format(data1.decode()), end='')
+        try:
+            while True:
 
+                message = client.recv(1024).decode('ascii')
+                if message == "NICK":
+                    client.send(nickname.encode('ascii'))
+                    break
 
-listener = threading.Thread(target=listen, daemon=True)
-listener.start()
+                elif message == "KICK":
+                    client.send("KICKED".encode('ascii'))
+                    print("You are kicked by admin!")
+                    is_kicked = True
+                    client.close()
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(('0.0.0.0', dport))
+                elif message == "OUT":
+                    print("admin can not connect from another device.")
+                    wrong_admin = True
+                    quit()
+                    client.close()
 
-while True:
-    msg = input('> ')
-    sock.sendto(msg.encode(), (ip, sport))
+                elif message == "TAKEN":
+                    print("Nickname is already taken.")
+                    nick_taken = True
+                    quit()
+                    client.close()
+
+                elif message == "BAN":
+                    client.send("BANNED".encode('ascii'))
+                    print("You are banned by admin!")
+                    is_banned = True
+                    client.close()
+
+                else:
+                    print(message)
+                    break
+
+        except:
+            if not is_exit and not is_kicked and not wrong_admin and not is_banned and not nick_taken:
+                print("An error occured!")
+                is_error = True
+            break
+
+def write():
+
+    global is_exit
+    while True:
+        try:
+            if wrong_admin or is_banned or is_error or nick_taken or is_kicked:
+                break
+
+            msg = input()
+            if msg== "quit":
+                print("You have been logged out.")
+                time.sleep(1.3)
+                client.send("QUIT".encode('ascii'))
+                is_exit = True
+                client.close()
+
+            if msg == '':
+                continue
+
+            message = '{}: {}'.format(nickname, msg)
+            client.send(message.encode('ascii'))
+
+        except:
+            client.close()
+            break
+
+receive_thread = threading.Thread(target=receive)
+receive_thread.start()
+
+write_thread = threading.Thread(target=write)
+write_thread.start()
